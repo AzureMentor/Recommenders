@@ -1,27 +1,39 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT License.
 
+# NOTE: This file is used by pytest to inject fixtures automatically. As it is explained in the documentation
+# https://docs.pytest.org/en/latest/fixture.html:
+# "If during implementing your tests you realize that you want to use a fixture function from multiple test files
+# you can move it to a conftest.py file. You don't need to import the module you defined your fixtures to use in a test,
+# it automatically gets discovered by pytest and thus you can simply receive fixture objects by naming them as
+# an input argument in the test."
+
 import calendar
 import datetime
 import os
 import pandas as pd
 import pytest
 from sklearn.model_selection import train_test_split
+from tempfile import TemporaryDirectory
 from tests.notebooks_common import path_notebooks
+from reco_utils.common.general_utils import get_number_processors, get_physical_memory
 
 try:
     from pyspark.sql import SparkSession
-except:
+except ImportError:
     pass  # so the environment without spark doesn't break
 
 
+@pytest.fixture
+def tmp(tmp_path_factory):
+    with TemporaryDirectory(dir=tmp_path_factory.getbasetemp()) as td:
+        yield td
+
+
 @pytest.fixture(scope="session")
-def spark(app_name="Sample", url="local[*]", memory="1G"):
-    """Start Spark if not started
-    Args:
-        app_name (str): sets name of the application
-        url (str): url for spark master
-        memory (str): size of memory for spark driver
+def spark(app_name="Sample", url="local[*]"):
+    """Start Spark if not started.
+
     Other Spark settings which you might find useful:
         .config("spark.executor.cores", "4")
         .config("spark.executor.memory", "2g")
@@ -30,21 +42,27 @@ def spark(app_name="Sample", url="local[*]", memory="1G"):
         .config("spark.executor.instances", 1)
         .config("spark.executor.heartbeatInterval", "36000s")
         .config("spark.network.timeout", "10000000s")
-        .config("spark.driver.maxResultSize", memory)
-    """
-    SUBMIT_ARGS = "--packages eisber:sarplus:0.2.3 pyspark-shell"
-    os.environ["PYSPARK_SUBMIT_ARGS"] = SUBMIT_ARGS
 
+    Args:
+        app_name (str): sets name of the application
+        url (str): url for spark master
+
+    Returns:
+        SparkSession: new Spark session
+    """
+    n_cores = get_number_processors()
+    physical_mem = get_physical_memory()
     return (
         SparkSession.builder.appName(app_name)
         .master(url)
-        .config("spark.driver.memory", memory)
-        .config("spark.sql.shuffle.partitions", "1")
+        .config("spark.driver.cores", 1)
+        .config("spark.driver.maxResultSize", "1g")
+        .config("spark.driver.memory", "{:d}g".format(int(physical_mem * 0.2)))
+        .config("spark.executor.cores", n_cores - 1)
+        .config("spark.executor.instances", 1)
+        .config("spark.executor.memory", "{:d}g".format(int(physical_mem * 0.6)))
         .config("spark.local.dir", "/mnt")
-        .config("spark.worker.cleanup.enabled", "true")
-        .config("spark.worker.cleanup.appDataTtl", "3600")
-        .config("spark.worker.cleanup.interval", "300")
-        .config("spark.storage.cleanupFilesAfterExecutorExit", "true")
+        .config("spark.sql.shuffle.partitions", 1)
         .getOrCreate()
     )
 
@@ -77,7 +95,7 @@ def pandas_dummy(header):
     ratings_dict = {
         header["col_user"]: [1, 1, 1, 1, 2, 2, 2, 2, 2, 2],
         header["col_item"]: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-        header["col_rating"]: [1, 2, 3, 4, 5, 1, 2, 3, 4, 5],
+        header["col_rating"]: [1.0, 2.0, 3.0, 4.0, 5.0, 1.0, 2.0, 3.0, 4.0, 5.0],
     }
     df = pd.DataFrame(ratings_dict)
     return df
@@ -101,7 +119,7 @@ def train_test_dummy_timestamp(pandas_dummy_timestamp):
 def demo_usage_data(header, sar_settings):
     # load the data
     data = pd.read_csv(sar_settings["FILE_DIR"] + "demoUsage.csv")
-    data["rating"] = pd.Series([1] * data.shape[0])
+    data["rating"] = pd.Series([1.0] * data.shape[0])
     data = data.rename(
         columns={
             "userId": header["col_user"],
@@ -126,10 +144,53 @@ def demo_usage_data(header, sar_settings):
 @pytest.fixture(scope="module")
 def demo_usage_data_spark(spark, demo_usage_data, header):
     data_local = demo_usage_data[[x[1] for x in header.items()]]
-    # TODO: install pyArrow in DS VM
-    # spark.conf.set("spark.sql.execution.arrow.enabled", "true")
-    data = spark.createDataFrame(data_local)
-    return data
+    return spark.createDataFrame(data_local)
+
+
+@pytest.fixture(scope="module")
+def criteo_first_row():
+    return {
+        "label": 0,
+        "int00": 1,
+        "int01": 1,
+        "int02": 5,
+        "int03": 0,
+        "int04": 1382,
+        "int05": 4,
+        "int06": 15,
+        "int07": 2,
+        "int08": 181,
+        "int09": 1,
+        "int10": 2,
+        "int11": None,
+        "int12": 2,
+        "cat00": "68fd1e64",
+        "cat01": "80e26c9b",
+        "cat02": "fb936136",
+        "cat03": "7b4723c4",
+        "cat04": "25c83c98",
+        "cat05": "7e0ccccf",
+        "cat06": "de7995b8",
+        "cat07": "1f89b562",
+        "cat08": "a73ee510",
+        "cat09": "a8cd5504",
+        "cat10": "b2cb9c98",
+        "cat11": "37c9c164",
+        "cat12": "2824a5f6",
+        "cat13": "1adce6ef",
+        "cat14": "8ba8b39a",
+        "cat15": "891b62e7",
+        "cat16": "e5ba7672",
+        "cat17": "f54016b9",
+        "cat18": "21ddcdc9",
+        "cat19": "b1252a9d",
+        "cat20": "07b5194c",
+        "cat21": None,
+        "cat22": "3a171ecb",
+        "cat23": "c5c50484",
+        "cat24": "e8b83407",
+        "cat25": "9727dd16",
+    }
 
 
 @pytest.fixture(scope="module")
@@ -138,21 +199,65 @@ def notebooks():
 
     # Path for the notebooks
     paths = {
-        "template": os.path.join(folder_notebooks, "template.ipynb"),
+        "template": os.path.join(
+            folder_notebooks, "template.ipynb"
+        ),
         "sar_single_node": os.path.join(
-            folder_notebooks, "00_quick_start", "sar_single_node_movielens.ipynb"
+            folder_notebooks, "00_quick_start", "sar_movielens.ipynb"
+        ),
+        "ncf": os.path.join(
+            folder_notebooks, "00_quick_start", "ncf_movielens.ipynb"
         ),
         "als_pyspark": os.path.join(
-            folder_notebooks, "00_quick_start", "als_pyspark_movielens.ipynb"
+            folder_notebooks, "00_quick_start", "als_movielens.ipynb"
         ),
-        "data_split": os.path.join(folder_notebooks, "01_prepare_data", "data_split.ipynb"),
+        "fastai": os.path.join(
+            folder_notebooks, "00_quick_start", "fastai_movielens.ipynb"
+        ),
+        "xdeepfm_quickstart": os.path.join(
+            folder_notebooks, "00_quick_start", "xdeepfm_synthetic.ipynb"
+        ),
+        "dkn_quickstart": os.path.join(
+            folder_notebooks, "00_quick_start", "dkn_synthetic.ipynb"
+        ),
+        "lightgbm_quickstart": os.path.join(
+            folder_notebooks, "00_quick_start", "lightgbm_tinycriteo.ipynb"
+        ),
+        "wide_deep": os.path.join(
+            folder_notebooks, "00_quick_start", "wide_deep_movielens.ipynb"
+        ),
+        "data_split": os.path.join(
+            folder_notebooks, "01_prepare_data", "data_split.ipynb"
+        ),
         "als_deep_dive": os.path.join(
             folder_notebooks, "02_model", "als_deep_dive.ipynb"
         ),
         "surprise_svd_deep_dive": os.path.join(
             folder_notebooks, "02_model", "surprise_svd_deep_dive.ipynb"
         ),
-        "evaluation": os.path.join(folder_notebooks, "03_evaluate", "evaluation.ipynb"),
+        "baseline_deep_dive": os.path.join(
+            folder_notebooks, "02_model", "baseline_deep_dive.ipynb"
+        ),
+        "ncf_deep_dive": os.path.join(
+            folder_notebooks, "02_model", "ncf_deep_dive.ipynb"
+        ),
+        "sar_deep_dive": os.path.join(
+            folder_notebooks, "02_model", "sar_deep_dive.ipynb"
+        ),
+        "vowpal_wabbit_deep_dive": os.path.join(
+            folder_notebooks, "02_model", "vowpal_wabbit_deep_dive.ipynb"
+        ),
+        "mmlspark_lightgbm_criteo": os.path.join(
+            folder_notebooks, "02_model", "mmlspark_lightgbm_criteo.ipynb"
+        ),
+        "evaluation": os.path.join(
+            folder_notebooks, "03_evaluate", "evaluation.ipynb"
+        ),
+        "spark_tuning": os.path.join(
+            folder_notebooks, "04_model_select_and_optimize", "tuning_spark_als.ipynb"
+        ),
+        "nni_tuning_svd": os.path.join(
+            folder_notebooks, "04_model_select_and_optimize", "nni_surprise_svd.ipynb"
+        )
     }
     return paths
-

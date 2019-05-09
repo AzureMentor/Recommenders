@@ -1,11 +1,14 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT License.
 
-import pytest
 import itertools
+
+import pytest
 import numpy as np
 import pandas as pd
-from reco_utils.common.constants import PREDICTION_COL
+from pandas.util.testing import assert_frame_equal
+
+from reco_utils.common.constants import DEFAULT_PREDICTION_COL
 from reco_utils.recommender.sar.sar_singlenode import SARSingleNode
 from reco_utils.recommender.sar import TIME_NOW
 from tests.sar_common import read_matrix, load_userpred, load_affinity
@@ -22,44 +25,8 @@ def _rearrange_to_test(array, row_ids, col_ids, row_map, col_map):
     return array
 
 
-def _apply_sar_hash_index(model, train, test, header, pandas_new=False):
-    # TODO: review this function
-    # index all users and items which SAR will compute scores for
-    # bugfix to get around different pandas vesions in build servers
-    if test is not None:
-        if pandas_new:
-            df_all = pd.concat([train, test], sort=False)
-        else:
-            df_all = pd.concat([train, test])
-    else:
-        df_all = train
-
-    # hash SAR
-    # Obtain all the users and items from both training and test data
-    unique_users = df_all[header["col_user"]].unique()
-    unique_items = df_all[header["col_item"]].unique()
-
-    # Hash users and items to smaller continuous space.
-    # Actually, this is an ordered set - it's discrete, but .
-    # This helps keep the matrices we keep in memory as small as possible.
-    enumerate_items_1, enumerate_items_2 = itertools.tee(enumerate(unique_items))
-    enumerate_users_1, enumerate_users_2 = itertools.tee(enumerate(unique_users))
-    item_map_dict = {x: i for i, x in enumerate_items_1}
-    user_map_dict = {x: i for i, x in enumerate_users_1}
-
-    # the reverse of the dictionary above - array index to actual ID
-    index2user = dict(enumerate_users_2)
-    index2item = dict(enumerate_items_2)
-
-    model.set_index(
-        unique_users, unique_items, user_map_dict, item_map_dict, index2user, index2item
-    )
-
-
 def test_init(header):
-    model = SARSingleNode(
-        remove_seen=True, similarity_type="jaccard", **header
-    )
+    model = SARSingleNode(remove_seen=True, similarity_type="jaccard", **header)
 
     assert model.col_user == "UserId"
     assert model.col_item == "MovieId"
@@ -72,14 +39,9 @@ def test_init(header):
 )
 def test_fit(similarity_type, timedecay_formula, train_test_dummy_timestamp, header):
     model = SARSingleNode(
-        remove_seen=True,
-        similarity_type=similarity_type,
-        timedecay_formula=timedecay_formula,
-        **header
+        similarity_type=similarity_type, timedecay_formula=timedecay_formula, **header
     )
     trainset, testset = train_test_dummy_timestamp
-    _apply_sar_hash_index(model, trainset, testset, header)
-
     model.fit(trainset)
 
 
@@ -90,30 +52,37 @@ def test_predict(
     similarity_type, timedecay_formula, train_test_dummy_timestamp, header
 ):
     model = SARSingleNode(
-        remove_seen=True,
-        similarity_type=similarity_type,
-        timedecay_formula=timedecay_formula,
-        **header
+        similarity_type=similarity_type, timedecay_formula=timedecay_formula, **header
     )
     trainset, testset = train_test_dummy_timestamp
-
-    _apply_sar_hash_index(model, trainset, testset, header)
-
     model.fit(trainset)
     preds = model.predict(testset)
 
     assert len(preds) == 2
     assert isinstance(preds, pd.DataFrame)
-    assert preds[header["col_user"]].dtype == object
-    assert preds[header["col_item"]].dtype == object
-    assert preds[PREDICTION_COL].dtype == float
+    assert preds[header["col_user"]].dtype == trainset[header["col_user"]].dtype
+    assert preds[header["col_item"]].dtype == trainset[header["col_item"]].dtype
+    assert preds[DEFAULT_PREDICTION_COL].dtype == trainset[header["col_rating"]].dtype
 
 
-"""
-Main SAR tests are below - load test files which are used for both Scala SAR and Python reference implementations
-"""
+def test_predict_all_items(train_test_dummy_timestamp, header):
+    model = SARSingleNode(**header)
+    trainset, _ = train_test_dummy_timestamp
+    model.fit(trainset)
 
-# Tests 1-6
+    user_items = itertools.product(
+        trainset[header["col_user"]].unique(), trainset[header["col_item"]].unique()
+    )
+    testset = pd.DataFrame(user_items, columns=[header["col_user"], header["col_item"]])
+    preds = model.predict(testset)
+
+    assert len(preds) == len(testset)
+    assert isinstance(preds, pd.DataFrame)
+    assert preds[header["col_user"]].dtype == trainset[header["col_user"]].dtype
+    assert preds[header["col_item"]].dtype == trainset[header["col_item"]].dtype
+    assert preds[DEFAULT_PREDICTION_COL].dtype == trainset[header["col_rating"]].dtype
+
+
 @pytest.mark.parametrize(
     "threshold,similarity_type,file",
     [
@@ -130,7 +99,6 @@ def test_sar_item_similarity(
 ):
 
     model = SARSingleNode(
-        remove_seen=True,
         similarity_type=similarity_type,
         timedecay_formula=False,
         time_decay_coefficient=30,
@@ -138,8 +106,6 @@ def test_sar_item_similarity(
         threshold=threshold,
         **header
     )
-
-    _apply_sar_hash_index(model, demo_usage_data, None, header)
 
     model.fit(demo_usage_data)
 
@@ -152,8 +118,8 @@ def test_sar_item_similarity(
             model.item_similarity.todense(),
             row_ids,
             col_ids,
-            model.item_map_dict,
-            model.item_map_dict,
+            model.item2index,
+            model.item2index,
         )
         assert np.array_equal(
             true_item_similarity.astype(test_item_similarity.dtype),
@@ -161,11 +127,7 @@ def test_sar_item_similarity(
         )
     else:
         test_item_similarity = _rearrange_to_test(
-            np.array(model.item_similarity),
-            row_ids,
-            col_ids,
-            model.item_map_dict,
-            model.item_map_dict,
+            model.item_similarity, row_ids, col_ids, model.item2index, model.item2index
         )
         assert np.allclose(
             true_item_similarity.astype(test_item_similarity.dtype),
@@ -174,48 +136,43 @@ def test_sar_item_similarity(
         )
 
 
-# Test 7
 def test_user_affinity(demo_usage_data, sar_settings, header):
     time_now = demo_usage_data[header["col_timestamp"]].max()
     model = SARSingleNode(
-        remove_seen=True,
         similarity_type="cooccurrence",
         timedecay_formula=True,
         time_decay_coefficient=30,
         time_now=time_now,
         **header
     )
-    _apply_sar_hash_index(model, demo_usage_data, None, header)
     model.fit(demo_usage_data)
 
     true_user_affinity, items = load_affinity(sar_settings["FILE_DIR"] + "user_aff.csv")
-    user_index = model.user_map_dict[sar_settings["TEST_USER_ID"]]
-    test_user_affinity = np.reshape(
+    user_index = model.user2index[sar_settings["TEST_USER_ID"]]
+    sar_user_affinity = np.reshape(
         np.array(
             _rearrange_to_test(
-                model.user_affinity, None, items, None, model.item_map_dict
+                model.user_affinity, None, items, None, model.item2index
             )[user_index,].todense()
         ),
         -1,
     )
     assert np.allclose(
-        true_user_affinity.astype(test_user_affinity.dtype),
-        test_user_affinity,
+        true_user_affinity.astype(sar_user_affinity.dtype),
+        sar_user_affinity,
         atol=sar_settings["ATOL"],
     )
 
 
-# Tests 8-10
 @pytest.mark.parametrize(
     "threshold,similarity_type,file",
     [(3, "cooccurrence", "count"), (3, "jaccard", "jac"), (3, "lift", "lift")],
 )
-def test_userpred(
+def test_recommend_k_items(
     threshold, similarity_type, file, header, sar_settings, demo_usage_data
 ):
     time_now = demo_usage_data[header["col_timestamp"]].max()
     model = SARSingleNode(
-        remove_seen=True,
         similarity_type=similarity_type,
         timedecay_formula=True,
         time_decay_coefficient=30,
@@ -223,7 +180,6 @@ def test_userpred(
         threshold=threshold,
         **header
     )
-    _apply_sar_hash_index(model, demo_usage_data, None, header)
     model.fit(demo_usage_data)
 
     true_items, true_scores = load_userpred(
@@ -238,9 +194,79 @@ def test_userpred(
             demo_usage_data[header["col_user"]] == sar_settings["TEST_USER_ID"]
         ],
         top_k=10,
-        sort_top_k=True
+        sort_top_k=True,
+        remove_seen=True,
     )
     test_items = list(test_results[header["col_item"]])
     test_scores = np.array(test_results["prediction"])
     assert true_items == test_items
     assert np.allclose(true_scores, test_scores, atol=sar_settings["ATOL"])
+
+
+def test_get_item_based_topk(header, pandas_dummy):
+
+    sar = SARSingleNode(**header)
+    sar.fit(pandas_dummy)
+
+    # test with just items provided
+    expected = pd.DataFrame(
+        dict(UserId=[0, 0, 0], MovieId=[8, 7, 6], prediction=[2.0, 2.0, 2.0])
+    )
+    items = pd.DataFrame({header["col_item"]: [1, 5, 10]})
+    actual = sar.get_item_based_topk(items, top_k=3)
+    assert_frame_equal(expected, actual)
+
+    # test with items and users
+    expected = pd.DataFrame(
+        dict(
+            UserId=[100, 100, 100, 1, 1, 1],
+            MovieId=[8, 7, 6, 4, 3, 10],
+            prediction=[2.0, 2.0, 2.0, 2.0, 2.0, 1.0],
+        )
+    )
+    items = pd.DataFrame(
+        {
+            header["col_user"]: [100, 100, 1, 100, 1, 1],
+            header["col_item"]: [1, 5, 1, 10, 2, 6],
+        }
+    )
+    actual = sar.get_item_based_topk(items, top_k=3, sort_top_k=True)
+    assert_frame_equal(expected, actual)
+
+    # test with items, users, and ratings
+    expected = pd.DataFrame(
+        dict(
+            UserId=[100, 100, 100, 1, 1, 1],
+            MovieId=[2, 4, 3, 4, 3, 10],
+            prediction=[5.0, 5.0, 5.0, 8.0, 8.0, 4.0],
+        )
+    ).set_index(['UserId', 'MovieId'])
+    items = pd.DataFrame(
+        {
+            header["col_user"]: [100, 100, 1, 100, 1, 1],
+            header["col_item"]: [1, 5, 1, 10, 2, 6],
+            header["col_rating"]: [5, 1, 3, 1, 5, 4],
+        }
+    )
+    actual = sar.get_item_based_topk(items, top_k=3).set_index(['UserId', 'MovieId'])
+    assert_frame_equal(expected, actual, check_like=True)
+
+
+def test_get_popularity_based_topk(header):
+
+    train_df = pd.DataFrame(
+        {
+            header["col_user"]: [1, 1, 1, 2, 2, 2, 3, 3, 3],
+            header["col_item"]: [1, 2, 3, 1, 3, 4, 5, 6, 1],
+            header["col_rating"]: [1, 2, 3, 1, 2, 3, 1, 2, 3]
+        }
+    )
+
+    sar = SARSingleNode(**header)
+    sar.fit(train_df)
+
+    expected = pd.DataFrame(
+        dict(MovieId=[1, 3, 4], prediction=[3, 2, 1])
+    )
+    actual = sar.get_popularity_based_topk(top_k=3, sort_top_k=True)
+    assert_frame_equal(expected, actual)

@@ -2,7 +2,7 @@
 __pycache__/
 *.py[cod]
 *$py.class
-
+*.pretrain*
 # C extensions
 *.so
 
@@ -103,6 +103,19 @@ venv.bak/
 # mypy
 .mypy_cache/
 
+# Tensorflow
+*model_checkpoints
+**/outputs
+
+# Azure ML
+config.json
+aml_config/
+aml_scripts/
+aml_data/
+
+# Spark
+spark-warehouse/
+
 ##########################
 .DS_Store
 .~*
@@ -111,11 +124,23 @@ Untitled*.ipynb
 ~$*
 output.ipynb
 conda*.yaml
-.idea
+reco_*.yaml
+.idea/
 *.npz
 *.data
+*.dat
 *.csv
+*.zip
 .vscode/
 scripts/repo_metrics/config.py
-Recommenders.zip
-Recommenders.egg
+movies.dat
+ratings.dat
+u.item
+u.data
+ml-100k/
+ml-10M100K/
+ml-1m/
+ml-20m/
+*.jar
+*.item
+*.pkl

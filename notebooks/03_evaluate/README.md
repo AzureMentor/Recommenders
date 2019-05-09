@@ -5,7 +5,6 @@ In this directory, a notebook is provided to illustrate evaluating models using 
 | Notebook | Description | 
 | --- | --- | 
 | [evaluation](evaluation.ipynb) | Examples of different rating and ranking metrics in Python+CPU and PySpark environments.
-| [comparison](comparison.ipynb) | Example of comparing different algorithms for both Rating and Ranking metrics
 
 Two approaches for evaluating model performance are demonstrated along with their respective metrics.
 1. Rating Metrics: These are used to evaluate how accurate a recommender is at predicting ratings that users gave to items
@@ -18,6 +17,13 @@ Two approaches for evaluating model performance are demonstrated along with thei
     * Recall - this measures the proportion of relevant items that are recommended
     * Normalized Discounted Cumulative Gain (NDCG) - evaluates how well the predicted items for a user are ranked based on relevance
     * Mean Average Precision (MAP) - average precision for each user normalized over all users
+    * Arear Under Curver (AUC) - integral area under the receiver operating characteristic curve
+    * Logistic loss (Logloss) - the negative log-likelihood of the true labels given the predictions of a classifier
+    
+References:
+1. Asela Gunawardana and Guy Shani: [A Survey of Accuracy Evaluation Metrics of Recommendation Tasks
+](http://jmlr.csail.mit.edu/papers/volume10/gunawardana09a/gunawardana09a.pdf)
+2. Dimitris Paraschakis et al, "Comparative Evaluation of Top-N Recommenders in e-Commerce: An Industrial Perspective", IEEE ICMLA, 2015, Miami, FL, USA.
+3. Yehuda Koren and Robert Bell, "Advances in Collaborative Filtering", Recommender Systems Handbook, Springer, 2015.
+4. Chris Bishop, "Pattern Recognition and Machine Learning", Springer, 2006.
 
-More details on recommender metrics can be found in ths paper by Asela Gunawardana and Guy Shani: [A Survey of Accuracy Evaluation Metrics of Recommendation Tasks
-](http://jmlr.csail.mit.edu/papers/volume10/gunawardana09a/gunawardana09a.pdf).
